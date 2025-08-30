@@ -1,0 +1,897 @@
+{
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "cfb25369-a969-4013-b23a-157bf9cd09ec",
+      "name": "When clicking ‘Test workflow’",
+      "type": "n8n-nodes-base.manualTrigger",
+      "position": [
+        -144,
+        3792
+      ],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "organic_results, ai_overview",
+        "options": {}
+      },
+      "id": "33622c3b-ff24-482c-a179-8fe88100f239",
+      "name": "Split Out2",
+      "type": "n8n-nodes-base.splitOut",
+      "position": [
+        1216,
+        4400
+      ],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "fieldsToAggregate": {
+          "fieldToAggregate": [
+            {
+              "fieldToAggregate": "content"
+            },
+            {
+              "fieldToAggregate": "organic_results.title"
+            },
+            {
+              "fieldToAggregate": "ai_overview_raw"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "8286bb75-4c86-4532-a2b7-2a53cc86e07b",
+      "name": "Aggregate",
+      "type": "n8n-nodes-base.aggregate",
+      "position": [
+        -16,
+        4928
+      ],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "jsCode": "// Get the output item of the previous node (AI Agent)\n// We assume that the AI Agent only outputs one result\nconst item = $input.first();\n\n// Some agents return an object, most return a string under `output`\nlet rawOutput = item.json.output ?? item.json;\n\ntry {\n  // If the agent already returned a parsed object with the expected keys\n  if (typeof rawOutput === 'object' && rawOutput !== null && rawOutput.title && rawOutput.article_body) {\n    const parsedData = rawOutput;\n\n    const result = {\n      title: parsedData.title,\n      slug: parsedData.slug,\n      meta_description: parsedData.meta_description,\n      strategy_summary: JSON.stringify(parsedData.strategy_summary),\n      body: JSON.stringify(parsedData.article_body),\n    };\n\n    return [{ json: result }];\n  }\n\n  // --- String cleanup & extraction ---\n  let s = String(rawOutput || '');\n\n  // Remove BOM, zero-width / non-breaking spaces\n  s = s.replace(/^\\uFEFF/, '')\n       .replace(/[\\u200B-\\u200D\\u2060\\u00A0]/g, ' ');\n\n  // Remove markdown code fences like ```json ... ```\n  s = s.replace(/^\\s*```(?:json)?\\s*/i, '').replace(/\\s*```$/i, '');\n\n  // Normalize smart quotes to straight quotes\n  s = s.replace(/[\\u201C\\u201D\\u201E\\u201F\\u2033]/g, '\"')\n       .replace(/[\\u2018\\u2019\\u201A\\u201B]/g, \"'\");\n\n  // Extract the first JSON object found\n  const startIndex = s.indexOf('{');\n  const endIndex = s.lastIndexOf('}');\n  if (startIndex === -1 || endIndex === -1) {\n    throw new Error('No valid JSON object found in AI output.');\n  }\n  let jsonString = s.slice(startIndex, endIndex + 1);\n\n  // Remove trailing commas before } or ]\n  jsonString = jsonString.replace(/,\\s*([}\\]])/g, '$1');\n\n  // Attempt parse\n  let parsedData;\n  try {\n    parsedData = JSON.parse(jsonString);\n  } catch (e) {\n    // Last-ditch: ensure unquoted keys are quoted (very conservative)\n    const fixed = jsonString\n      .replace(/([{,\\s])([A-Za-z0-9_]+)\\s*:/g, '$1\"$2\":') // quote keys\n      .replace(/,\\s*([}\\]])/g, '$1'); // remove trailing commas again\n    parsedData = JSON.parse(fixed);\n  }\n\n  // Basic shape validation\n  const required = ['title', 'slug', 'meta_description', 'strategy_summary', 'article_body'];\n  for (const k of required) {\n    if (!(k in parsedData)) throw new Error(`Missing key: ${k}`);\n  }\n\n  // Build flattened result for Supabase\n  const result = {\n    title: parsedData.title,\n    slug: parsedData.slug,\n    meta_description: parsedData.meta_description,\n    strategy_summary: JSON.stringify(parsedData.strategy_summary),\n    body: JSON.stringify(parsedData.article_body),\n  };\n\n  return [{ json: result }];\n\n} catch (error) {\n  console.error('JSON parsing failed:', error);\n  console.error('Raw AI output:', rawOutput);\n  throw new Error('Unable to parse the JSON data returned by AI. Please check the AI Agent output.');\n}\n"
+      },
+      "id": "bc13509f-69c8-4bb8-8cd9-1e92e9a190fb",
+      "name": "Code",
+      "type": "n8n-nodes-base.code",
+      "position": [
+        896,
+        4928
+      ],
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "8eb6d611-0979-4ce4-aae6-22ae2098c1fe",
+              "name": "seedKeyword",
+              "type": "string",
+              "value": "Langchain"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "f66cfd26-52e9-4104-b334-438e32725e62",
+      "name": "Set seed keywords",
+      "type": "n8n-nodes-base.set",
+      "position": [
+        112,
+        3792
+      ],
+      "typeVersion": 3.4
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=The following are the keywords for the topic: `{{ $json.search_parameters.q }}`\ntrends data:\n{{ JSON.stringify(\n  ($json.interest_over_time?.timeline_data || [])\n    .filter(p => p.partial_data !== true)              \n    .map(p => ({\n      date: p.date,\n      timestamp: Number(p.timestamp ?? p.time) || null, // keep as number\n      value: Number(\n        p.values?.[0]?.extracted_value ??              \n        p.values?.[0]?.value ??                       \n        0\n      )\n    }))\n) }}\n",
+        "hasOutputParser": true,
+        "options": {
+          "systemMessage": "=Context & Role\nYou are a professional SEO content strategist. Your primary task is to interpret time series data from Google Trends to evaluate the market trend of a given keyword and provide a clear recommendation on content creation priority.\n\nYou only need to make 5 requests!\n\n### Task\n\nBased on the user-provided input data (a JSON object containing Google Trends timeline_data), analyze the popularity trend and return a JSON object with three fields—data_interpretation, trend_status, recommended_priority—strictly and keyword following the specified output format. \n\nPay attention to the data source of this keyword and directly take this value \n{{ $json.search_parameters.q }}\n\n### Rules\n\nYou must follow the rules below to determine trend_status and recommended_priority:\n1. Analyze the timeline_data array:\n• Split the time-series data roughly into two halves.\n•Compare the average popularity value of the second half with that of the first half.\n2. Determine trend_status — You must choose one of the following:\n• Breakout: If the data shows a dramatic spike at the latest time point that is significantly higher than the average level.\n• Rising: If the average popularity in the second half is significantly higher than in the first half (e.g., more than 20% higher).\n• Stable: If the averages of both halves are close, or if the data exhibits a regular cyclical pattern without a clear long-term upward or downward trend.\n• Falling: If the average popularity in the second half is significantly lower than in the first half.\n3. Determine recommended_priority — You must map this directly from the trend_status:\n• If trend_status is Breakout, then recommended_priority is P0 - Immediate Action.\n• If trend_status is Rising, then recommended_priority is P1 - High Priority.\n• If trend_status is Stable, then recommended_priority is P2 - Moderate Priority.\n• If trend_status is Falling, then recommended_priority is P3 - Low Priority.\n4. Write data_interpretation:\n• Use 1–2 short sentences in English to summarize your observation of the trend. For example: “This keyword shows a clear weekly cycle with dips on weekends and rises on weekdays, but overall the trend remains stable.” or “The keyword’s popularity has been rising steadily over the past month, indicating strong growth potential.”\n\n### Output Format\n\nRespond with only the JSON object, no extra text, no markdown, no code block, and no explanation."
+        }
+      },
+      "id": "99ad089f-5aec-496e-9ad9-35d2439b1760",
+      "name": "AI Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "position": [
+        1216,
+        3792
+      ],
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "version": 2,
+            "leftValue": "",
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "81225d05-b95d-41ed-996c-2b2ec86d499b",
+              "operator": {
+                "type": "string",
+                "operation": "notContains"
+              },
+              "leftValue": "={{ $json.recommended_priority }}",
+              "rightValue": "=P3"
+            }
+          ],
+          "combinator": "or"
+        },
+        "options": {}
+      },
+      "id": "1a6159db-55ee-4015-a733-3d4411e50136",
+      "name": "Filter out topics with priority above P2",
+      "type": "n8n-nodes-base.filter",
+      "position": [
+        288,
+        4400
+      ],
+      "typeVersion": 2.2
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "eca6d648-6b06-4bf0-a139-6cb3d0344d15",
+              "name": "organic_results",
+              "type": "array",
+              "value": "={{ $json.organic_results.slice(0,3) }}"
+            },
+            {
+              "id": "c543d91d-30ad-4966-b750-82288ec026f3",
+              "name": "ai_overview",
+              "value": "={{ $json.ai_overview }}",
+              "type": "object"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "156c6da3-41eb-4c38-992e-99e658f67964",
+      "name": "Filter TOP3 competitor links",
+      "type": "n8n-nodes-base.set",
+      "position": [
+        928,
+        4400
+      ],
+      "typeVersion": 3.4
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=You are a senior SEO content writer at a SaaS company focused on “project management software.” Your job is to deliver a complete, high-quality, publish-ready, SEO-optimized article using the provided inputs.\n\nInputs (do not alter)\n\nTarget Keyword: {{ $json.title }}\n\nYour SaaS Product Name: SaaS Product\n\nLatest Trend Insight: \"{{ $json.ai_overview_raw }}\"\n\nCompetitor 1 (Top-ranked full content):\n\"\"\"\n{{ $json.content[0] }}\n\"\"\"\n\nCompetitor 2 (Top-ranked full content):\n\"\"\"\n{{ $json.content[1] }}\n\"\"\"\n\nCompetitor 3 (Top-ranked full content):\n\"\"\"\n{{ $json.content[2] }}\n\"\"\"\n\nRequirements\n\nDeep Competitive Analysis: Read all competitor contents end-to-end. Identify their strengths (structure, topics covered, data used) and gaps (missed subtopics, thin explanations, outdated advice, weak CTAs). Use this to create a more comprehensive and differentiated piece—NEVER copy phrasing; paraphrase and synthesize in your own words.\n\nTrend Integration: Naturally weave in the “Latest Trend Insight” (treat it as recent market signals). Cite the ideas in narrative form (no lists/bullets) and explain why they matter now for project management buyers.\n\nAudience & Value: Write for mid-market to enterprise teams evaluating project management software. Prioritize clarity, actionable detail, and practical examples over jargon.\n\nFeatured Snippet Requirement: Within the first 120 words, include a 35–55 word plain-English definition/answer that contains the exact target keyword once and reads naturally.\n\nOn-Page SEO:\n\nInclude the target keyword (or close variant) in the title, first 100 words, one H2, and meta description.\n\nUse semantically related terms (e.g., resource management, Gantt, Kanban, workflows, integrations, automation, reporting, security, SOC 2, SSO, SCIM, portfolio management).\n\nAvoid fluff. Each paragraph must be rich with specific details, realistic examples, and practical guidance.\n\nEvidence & Recency: Incorporate 2–3 recent stats or findings (≤24 months). Name the source in text (no outbound links). Briefly explain why each data point matters to PM leaders.\n\nE-E-A-T & Accessibility: Maintain a professional, analytical, narrative tone. Keep readability around grade 8–10. Define acronyms on first use. Add one brief anecdote or realistic scenario to clarify a point.\n\n\n\nStyle & Quality: Analytical, narrative-driven, professional tone. Authoritative, concise, and helpful. No hype, no clichés, no generic claims like “best” without support. Bullets in the article body—paragraphs only. Reference research, anecdotes, or realistic examples when they clarify a point.\n\nLength & Structure: Long-form (target 1000–1500 words). Use clearly structured H2/H3 headings as specified in the JSON schema below. To meet total length, ensure each paragraph delivers substantial depth.\n\nOriginality & Compliance: Do not reproduce competitor sentences. No brand-bashing. No quotes unless reworded. No external links.\n\nTone Guide (example excerpt—style reference, do not copy verbatim):\n\"A common sentiment that AI evangelists have expressed is their eagerness to outsource day-to-day communication. But here’s the catch: if you want AI to do its best work, you have to stay sharp yourself...\"\n\nOutput Discipline: Respond only with a single valid JSON object following the schema below. No extra text, comments, markdown, or trailing commas. Escape any internal quotes correctly.\n\nJSON Output Schema (use exactly these keys)\n\n{\n\"title\": \"An eye-catching SEO title including the target keyword\",\n\"slug\": \"lowercase-hyphenated-keyword-rich-slug-no-stop-words-or-punctuation\",\n\"meta_description\": \"120–160 characters including the keyword and a clear call to action.\",\n\"strategy_summary\": {\n\"key_trend_insight\": \"1–2 sentence summary of the trend insight you used.\",\n\"content_angle\": \"1–2 sentences explaining how this article differentiates from competitors.\"\n},\n\"article_body\": [\n{\n\"type\": \"H2\",\n\"title\": \"Compelling first H2 with a keyword variant\",\n\"content\": \"A rich, fluent, and informative paragraph that frames the problem/opportunity in project management today and sets context using insights learned from competitors without copying them. Include the featured snippet answer within the first 120 words.\"\n},\n{\n\"type\": \"H2\",\n\"title\": \"Second H2 that deepens the topic with data/examples\",\n\"content\": \"Synthesize competitive gaps and integrate the latest trend insight in narrative form, explaining real implications for PM leaders (processes, tooling, outcomes). Name 1–2 recent sources in text and explain why the data matters.\"\n},\n{\n\"type\": \"H3\",\n\"title\": \"Focused H3 refining the second H2\",\n\"content\": \"Offer concrete guidance (frameworks, steps, metrics). Reference capabilities teams actually evaluate (automation, resource planning, dependencies, reporting, integrations) with specific, realistic examples or a brief scenario.\"\n},\n{\n\"type\": \"H2\",\n\"title\": \"How SaaS Product solves this end-to-end\",\n\"content\": \"Position SaaS Product: outline features (e.g., timelines/Gantt, Kanban, custom fields, approvals, automations, portfolio reporting, SSO/SCIM, SOC 2), key outcomes (on-time delivery, capacity visibility, fewer status meetings), and a soft CTA to start a trial or demo.\"\n}\n]\n}\n\nValidation Rules\n\nEnsure valid JSON. No markdown fences. No extra keys. No nulls. No placeholders like “TBD”.\n\nEach paragraph must be substantial; target 220–350 words per paragraph to reach the overall length while staying concise and valuable.\n\nTitle ≤ 65 characters if possible; meta description approx. 150 characters (120–160 ok).\n\nSlug: lowercase, ASCII, hyphenated, 4–8 words, remove stop punctuation.\n\nTotal length across all paragraphs should land between 1000–1500 words.",
+        "options": {}
+      },
+      "id": "3632ec8f-a603-4b68-a413-0329ed8fc3f1",
+      "name": "Senior SEO content writer",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "position": [
+        352,
+        4928
+      ],
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "jsCode": "// Loop over input items and add a new field called 'myNewField' to the JSON of each one\nconst level0 = []\nconst level1 = []\nconst level2 = []\nconst level3 = []\nfor (const item of $input.all()) {\n  const itemData = item.json.output\n  const level = itemData?.recommended_priority?.toLowerCase()\n  if (level.includes('p0')) {\n    level0.push(itemData)\n  } else if  (level.includes('p1')) {\n    level1.push(itemData)\n  } else if  (level.includes('p2')) {\n    level2.push(itemData)\n  } else if  (level.includes('p3')) {\n    level3.push(itemData)\n  } \n}\n\nreturn [\n  ...level0,\n  ...level1,\n  ...level2,\n  ...level3\n]"
+      },
+      "id": "94f942b3-8d3d-4507-84a8-4b70aa1739c0",
+      "name": "Code1",
+      "type": "n8n-nodes-base.code",
+      "position": [
+        1600,
+        3792
+      ],
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "jsonSchemaExample": "{\n  \"data_interpretation\": \"Your English data interpretation text\",\n  \"trends_status\": \"Steady rise\",\n  \"recommended_priority\": \"P1 - Priority layout\",\n  \"keyword\": \"current input search query word\"\n}"
+      },
+      "id": "d4657ea4-150b-4df7-8884-b2ae77fe5af1",
+      "name": "Structured Output Parser1",
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "position": [
+        1376,
+        4016
+      ],
+      "typeVersion": 1.3
+    },
+    {
+      "parameters": {
+        "content": "# Phase 1: Hot Topics\n",
+        "height": 480,
+        "width": 2000
+      },
+      "id": "f32debec-382b-4d12-9ba0-fbb23b8039ef",
+      "name": "Sticky Note13",
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -176,
+        3696
+      ],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "content": "# Phase 2: Competitive content research",
+        "height": 520,
+        "width": 2000,
+        "color": 4
+      },
+      "id": "5da5b9be-d5a5-412f-a54e-c73685923a37",
+      "name": "Sticky Note14",
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -208,
+        4224
+      ],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "content": "# Phase 3: Complete SEO article writing and store it in the database",
+        "height": 520,
+        "width": 2000,
+        "color": 3
+      },
+      "id": "731ea958-40c7-47b0-962f-5219bf982577",
+      "name": "Sticky Note15",
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -208,
+        4768
+      ],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "value": "gpt-4.1-mini",
+          "mode": "list",
+          "cachedResultName": "gpt-4.1-mini"
+        },
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.2,
+      "position": [
+        1184,
+        4032
+      ],
+      "id": "f3ca0cc8-f7ec-485f-8371-d9fc839ef4eb",
+      "name": "OpenAI Chat Model1",
+      "credentials": {
+        "openAiApi": {
+          "id": "################",
+          "name": "################"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gpt-4.1-mini"
+        },
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.2,
+      "position": [
+        368,
+        5168
+      ],
+      "id": "3bafc40c-9ff0-424b-8f31-fc31b1b6cd76",
+      "name": "OpenAI Chat Model2",
+      "credentials": {
+        "openAiApi": {
+          "id": "################",
+          "name": "################"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "1YjQWVtYmC7CSzs0QmR-_kq6lzC7tBw09lDfOdvq-JCE",
+          "mode": "list",
+          "cachedResultName": "SeoAutomation1",
+          "cachedResultUrl": "################"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Sheet1",
+          "cachedResultUrl": "################"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "data_interpretation",
+              "displayName": "data_interpretation",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "trends_status",
+              "displayName": "trends_status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "recommended_priority",
+              "displayName": "recommended_priority",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "keyword",
+              "displayName": "keyword",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "title",
+              "displayName": "title",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "slug",
+              "displayName": "slug",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "meta_description",
+              "displayName": "meta_description",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "strategy_summary",
+              "displayName": "strategy_summary",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "body",
+              "displayName": "body",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "output",
+              "displayName": "output",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "59ddabbd-32ae-4fa7-b744-9a0bfa0a5203",
+      "name": "Append or update row in sheet1",
+      "type": "n8n-nodes-base.googleSheets",
+      "position": [
+        -32,
+        4400
+      ],
+      "typeVersion": 4.6,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "################",
+          "name": "Google Sheets(Harsh)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "1YjQWVtYmC7CSzs0QmR-_kq6lzC7tBw09lDfOdvq-JCE",
+          "mode": "list",
+          "cachedResultName": "SeoAutomation1",
+          "cachedResultUrl": "################"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Sheet1",
+          "cachedResultUrl": "################"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [
+            "keyword"
+          ],
+          "schema": [
+            {
+              "id": "data_interpretation",
+              "displayName": "data_interpretation",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "trends_status",
+              "displayName": "trends_status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "recommended_priority",
+              "displayName": "recommended_priority",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "keyword",
+              "displayName": "keyword",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "title",
+              "displayName": "title",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "slug",
+              "displayName": "slug",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "meta_description",
+              "displayName": "meta_description",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "strategy_summary",
+              "displayName": "strategy_summary",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "body",
+              "displayName": "body",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.6,
+      "position": [
+        1376,
+        4928
+      ],
+      "id": "c1110ac4-7fb3-4d05-84a9-63c3007c1ce6",
+      "name": "Append or update row in sheet2",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "################",
+          "name": "Google Sheets(Harsh)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Run once for all items\nconst src = $json;\nconst out = [];\nconst add = (kw, source) => {\n  kw = String(kw || '')\n    .replace(/\\s+/g, ' ')\n    .replace(/\\?+$/,'')\n    .trim();\n  if (!kw) return;\n  out.push({ json: { keyword: kw, source } });\n};\nconst asArr = v => Array.isArray(v) ? v : (v ? [v] : []);\n\n// Pull candidates\nasArr(src.related_searches).forEach(r => add(r?.query,    'related_searches'));\nasArr(src.related_questions).forEach(q => add(q?.question,'related_questions'));\nasArr(src.organic_results).forEach(r   => add(r?.title,   'organic_results'));\nasArr(src.latest_posts).forEach(p      => add(p?.title,   'latest_posts'));\n\n// Quality filters\nconst siteWords = /\\b(reddit|stackoverflow|github|wikipedia|youtube|x\\.com|quora)\\b/i;\nconst filtered = out.filter(i => {\n  const k = i.json.keyword;\n  const kl = k.toLowerCase();\n  if (kl.length < 2 || kl.length > 80) return false;\n  if (/^https?:\\/\\//.test(kl)) return false;\n  if (siteWords.test(kl)) return false;\n  return true;\n});\n\n// De-dupe (case-insensitive)\nconst seen = new Set();\nconst deduped = filtered.filter(i => {\n  const k = i.json.keyword.toLowerCase();\n  if (seen.has(k)) return false;\n  seen.add(k);\n  return true;\n});\n\n// Optional: prioritize related_searches, then take top N\nconst priority = { related_searches: 1, related_questions: 2, organic_results: 3, latest_posts: 4, unknown: 9 };\ndeduped.sort((a,b) => (priority[a.json.source]||9) - (priority[b.json.source]||9));\nconst MAX = 25; // adjust if you like\nreturn deduped.slice(0, MAX);\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        624,
+        3792
+      ],
+      "id": "d35827df-e3ae-49e4-b763-e2f39fa7ae19",
+      "name": "Extract keyword"
+    },
+    {
+      "parameters": {
+        "q": "={{ $json.seedKeyword }}",
+        "additionalFields": {},
+        "requestOptions": {}
+      },
+      "type": "n8n-nodes-serpapi.serpApi",
+      "typeVersion": 1,
+      "position": [
+        352,
+        3792
+      ],
+      "id": "d4c7be72-efb5-44b5-9028-966501a2c22a",
+      "name": "Google search",
+      "credentials": {
+        "serpApi": {
+          "id": "################",
+          "name": "SerpAPI account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "google_trends",
+        "q": "={{ $json.keyword }}",
+        "additionalFields": {
+          "date": "today 1-m"
+        },
+        "requestOptions": {}
+      },
+      "type": "n8n-nodes-serpapi.serpApi",
+      "typeVersion": 1,
+      "position": [
+        944,
+        3792
+      ],
+      "id": "7ef97072-1a6f-44cf-ba65-ea240e3cd1e7",
+      "name": "Google_trends search",
+      "credentials": {
+        "serpApi": {
+          "id": "################",
+          "name": "SerpAPI account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "q": "={{ $json.keyword }}",
+        "additionalFields": {},
+        "requestOptions": {}
+      },
+      "type": "n8n-nodes-serpapi.serpApi",
+      "typeVersion": 1,
+      "position": [
+        624,
+        4400
+      ],
+      "id": "e961c805-a473-4aa9-85a3-bae62c117967",
+      "name": "Google search1",
+      "credentials": {
+        "serpApi": {
+          "id": "################",
+          "name": "SerpAPI account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// n8n Code node (JavaScript) — build reader_url, fetch content, return result\n// Handles URL items and AI Overview–only items. Always returns `content`.\n\nasync function pickUrl(s) {\n  const fromDisplayed = (dl) => {\n    dl = (dl || '').trim();\n    if (!dl) return '';\n    dl = dl.replace(/\\s*›\\s*/g, '/').replace(/\\s+/g, '');\n    if (!/^https?:\\/\\//i.test(dl)) dl = 'https://' + dl;\n    return dl;\n  };\n  const fromRedirect = (rl) => {\n    rl = (rl || '').trim();\n    if (!rl) return '';\n    try {\n      const u = new URL(rl);\n      const inner = u.searchParams.get('url') || u.searchParams.get('q');\n      if (inner) return decodeURIComponent(inner);\n    } catch {}\n    const m = rl.match(/[?&](?:url|q)=([^&]+)/);\n    return m ? decodeURIComponent(m[1]) : '';\n  };\n\n  if (s.link?.trim()) return s.link.trim();\n  const inner = fromRedirect(s.redirect_link);\n  if (inner) return inner;\n  const dl = fromDisplayed(s.displayed_link);\n  if (dl) return dl;\n  return '';\n}\n\nfunction makeReaderUrl(target) {\n  const m = target.match(/^(https?):\\/\\/(.+)$/i);\n  const scheme = m ? m[1].toLowerCase() : 'https';\n  const rest = m ? m[2] : target.replace(/^\\/+/, '');\n  return `https://r.jina.ai/${scheme}://${encodeURI(rest)}`;\n}\n\nasync function fetchText(url) {\n  try {\n    return await this.helpers.httpRequest({\n      method: 'GET',\n      url,\n      json: false,\n      gzip: true,\n      headers: {\n        'User-Agent': 'n8n (+https://n8n.io)',\n        'Accept': 'text/plain,*/*;q=0.8',\n      },\n      timeout: 20000,\n    });\n  } catch (e1) {\n    return await this.helpers.request({\n      method: 'GET',\n      uri: url,\n      json: false,\n      gzip: true,\n      headers: {\n        'User-Agent': 'n8n (+https://n8n.io)',\n        'Accept': 'text/plain,*/*;q=0.8',\n      },\n      timeout: 20000,\n    });\n  }\n}\n\nfunction extractTitle(md) {\n  const m = md.match(/^\\s*#\\s+(.+)\\s*$/m);\n  return m ? m[1].trim() : '';\n}\n\n// Flatten AI Overview to a single string\nfunction extractAIOverviewText(ao) {\n  if (!ao) return '';\n  if (typeof ao === 'string') return ao.trim().replace(/\\s+/g, ' ').slice(0, 1200);\n\n  const parts = [];\n  const visit = (node) => {\n    if (!node) return;\n    if (typeof node === 'string') { parts.push(node); return; }\n    if (Array.isArray(node)) { node.forEach(visit); return; }\n    if (typeof node === 'object') {\n      ['text', 'snippet', 'summary', 'title'].forEach(k => {\n        if (typeof node[k] === 'string') parts.push(node[k]);\n      });\n      ['list', 'text_blocks', 'items', 'paragraphs'].forEach(k => {\n        if (node[k]) visit(node[k]);\n      });\n    }\n  };\n  visit(ao);\n  return parts.join(' ').replace(/\\s+/g, ' ').trim().slice(0, 1200);\n}\n\nreturn await Promise.all(items.map(async (item) => {\n  const s = { ...(item.json || {}) };\n\n  // Grab AI Overview (if present) up front\n  const aiOverviewRaw = s.ai_overview !== undefined ? s.ai_overview : null;\n  const aiOverviewText = extractAIOverviewText(aiOverviewRaw);\n\n  try {\n    const target = (s.link && s.link.trim()) ? s.link.trim() : await pickUrl(s);\n\n    // --- NEW: handle AI Overview–only items (no URL) ---\n    if (!target) {\n      if (aiOverviewText) {\n        return {\n          json: {\n            ...s,\n            source_type: 'ai_overview',\n            scrape_ok: true,\n            url_final: '',\n            reader_url: '',\n            title_inferred: s.title || 'AI Overview',\n            content: aiOverviewText,        // <<< ensure content is returned\n            ai_overview: aiOverviewText,    // clean string\n            ai_overview_raw: aiOverviewRaw, // original structure\n          },\n        };\n      }\n      // nothing usable at all\n      return {\n        json: {\n          ...s,\n          source_type: 'unknown',\n          scrape_ok: false,\n          scrape_error: 'No usable URL or AI overview text',\n          ai_overview: aiOverviewText,\n          ai_overview_raw: aiOverviewRaw,\n        },\n      };\n    }\n\n    // Normal URL scrape\n    const reader_url = makeReaderUrl(target);\n    const content = await fetchText.call(this, reader_url);\n    const text = String(content).slice(0, 200000);\n    const inferredTitle = extractTitle(text);\n\n    return {\n      json: {\n        ...s,\n        source_type: 'url',\n        url_final: target,\n        reader_url,\n        scrape_ok: true,\n        title_inferred: inferredTitle || s.title || '',\n        content: text,\n        ai_overview: aiOverviewText,\n        ai_overview_raw: aiOverviewRaw,\n      },\n    };\n  } catch (err) {\n    return {\n      json: {\n        ...s,\n        source_type: s.link ? 'url' : (aiOverviewText ? 'ai_overview' : 'unknown'),\n        scrape_ok: false,\n        scrape_error: (err && err.message) ? err.message : String(err),\n        // still pass AI overview through so downstream can use it\n        ai_overview: aiOverviewText,\n        ai_overview_raw: aiOverviewRaw,\n        // if URL failed but we have AI overview, provide it as fallback content\n        content: aiOverviewText || undefined,\n      },\n    };\n  }\n}));\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1568,
+        4400
+      ],
+      "id": "0618ba4c-a45e-4794-a56b-02d58fdfe5ab",
+      "name": "Scrap"
+    }
+  ],
+  "connections": {
+    "When clicking ‘Test workflow’": {
+      "main": [
+        [
+          {
+            "node": "Set seed keywords",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Out2": {
+      "main": [
+        [
+          {
+            "node": "Scrap",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate": {
+      "main": [
+        [
+          {
+            "node": "Senior SEO content writer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code": {
+      "main": [
+        [
+          {
+            "node": "Append or update row in sheet2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set seed keywords": {
+      "main": [
+        [
+          {
+            "node": "Google search",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent": {
+      "main": [
+        [
+          {
+            "node": "Code1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter out topics with priority above P2": {
+      "main": [
+        [
+          {
+            "node": "Google search1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter TOP3 competitor links": {
+      "main": [
+        [
+          {
+            "node": "Split Out2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Senior SEO content writer": {
+      "main": [
+        [
+          {
+            "node": "Code",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code1": {
+      "main": [
+        [
+          {
+            "node": "Append or update row in sheet1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Structured Output Parser1": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model1": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model2": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Senior SEO content writer",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Append or update row in sheet1": {
+      "main": [
+        [
+          {
+            "node": "Filter out topics with priority above P2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract keyword": {
+      "main": [
+        [
+          {
+            "node": "Google_trends search",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google search": {
+      "main": [
+        [
+          {
+            "node": "Extract keyword",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google_trends search": {
+      "main": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google search1": {
+      "main": [
+        [
+          {
+            "node": "Filter TOP3 competitor links",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Scrap": {
+      "main": [
+        [
+          {
+            "node": "Aggregate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {
+    "When clicking ‘Test workflow’": [
+      {}
+    ]
+  },
+  "meta": {
+    "instanceId": "3fd7699162ed90a852b3862c6bcaec63b4bf632c8811a57ee925967cc60997af"
+  }
+}
