@@ -1,6 +1,6 @@
-An AI-powered tool that automatically generates SEO-optimized articles tailored for your niche. It handles keyword research, content structuring, and SEO best practices — saving hours of manual effort.
+## An AI-powered tool that automatically generates SEO-optimized articles tailored for your niche. It handles keyword research, content structuring, and SEO best practices — saving hours of manual effort.
 
-✨ Features
+# ✨ Features
 
 🔑 Keyword-based generation – Enter your target keyword(s) and get SEO-optimized content.
 
@@ -14,7 +14,7 @@ An AI-powered tool that automatically generates SEO-optimized articles tailored 
 
 📑 Export options – Save articles as Markdown, HTML, or directly to CMS.
 
-🛠️ Tech Stack
+# 🛠️ Tech Stack
 
 n8n
  – Workflow automation.
@@ -29,7 +29,7 @@ Node.js
  – Backend logic and API handling.
 
 
-🚀 Getting Started
+# 🚀 Getting Started
 1️⃣ Clone the Repository
 git clone https://github.com/yourusername/automated-seo-article.git
 cd automated-seo-article
@@ -57,7 +57,7 @@ node src/generateArticle.js --keyword "AI in Healthcare"
 <img width="1408" height="952" alt="image" src="https://github.com/user-attachments/assets/c3d616fa-5bb9-4de9-bc0a-8edf368b7481" />
 
 
-📌 Example Output
+# 📌 Example Output
 
 Keyword: "AI in Healthcare"
 
@@ -75,7 +75,7 @@ H2: AI in Drug Discovery
 
 H3: Real-World Use Cases
 
-🔒 Security & Rate Limiting
+# 🔒 Security & Rate Limiting
 
 Workspace-based isolation for users.
 
@@ -83,7 +83,7 @@ API rate limiting to prevent abuse.
 
 Secure API key management.
 
-🧩 Future Improvements
+# 🧩 Future Improvements
 
 Multi-language article support 🌍
 
@@ -91,6 +91,6 @@ Automatic internal linking 🔗
 
 SERP analysis integration 📈
 
-🤝 Contributing
+# 🤝 Contributing
 
 Pull requests are welcome. For major changes, please open an issue first to discuss.
