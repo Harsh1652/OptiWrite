@@ -75,13 +75,6 @@ H2: AI in Drug Discovery
 
 H3: Real-World Use Cases
 
-# 🔒 Security & Rate Limiting
-
-Workspace-based isolation for users.
-
-API rate limiting to prevent abuse.
-
-Secure API key management.
 
 # 🧩 Future Improvements
 
